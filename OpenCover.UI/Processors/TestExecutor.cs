@@ -17,7 +17,13 @@ using Microsoft.Win32;
 
 namespace OpenCover.UI.Processors
 {
-	/// <summary>
+    using System.Threading.Tasks;
+    using Microsoft.VisualStudio.Shell.Interop;
+    using Microsoft.VisualStudio.Shell;
+    using EnvDTE80;
+    using System.ComponentModel;
+
+    /// <summary>
 	/// Executes the tests with code coverage using OpenCover
 	/// </summary>
 	internal abstract class TestExecutor
@@ -50,6 +56,8 @@ namespace OpenCover.UI.Processors
 		}
 
 		protected string _openCoverPath;
+
+        protected string _reportGeneratorPath;
 		
 		protected string _openCoverResultsFile;
 		protected string _testResultsFile;
@@ -81,7 +89,8 @@ namespace OpenCover.UI.Processors
         /// </summary>
         private void SetOpenCoverPath()
         {
-            _openCoverPath = OpenCoverUISettings.Default.OpenCoverPath;
+            _openCoverPath = OpenCoverUISettings.Default.OpenCoverPath;           
+            
             if (!System.IO.File.Exists(_openCoverPath))
             {
                 MessageBox.Show("OpenCover not found. Please select the OpenCover executable",
@@ -91,6 +100,20 @@ namespace OpenCover.UI.Processors
                 {
                     _openCoverPath = dialog.FileName;
                     OpenCoverUISettings.Default.OpenCoverPath = _openCoverPath;
+                    OpenCoverUISettings.Default.Save();
+                }
+            }
+
+            _reportGeneratorPath = OpenCoverUISettings.Default.ReportGeneratorPath;
+            if (!System.IO.File.Exists(_reportGeneratorPath))
+            {
+                MessageBox.Show("ReportGenerator not found. Please select the ReportGenerator executable",
+                    Resources.MessageBoxTitle, MessageBoxButton.OK);
+                var dialog = new OpenFileDialog { Filter = "Executables (*.exe)|*.exe" };
+                if (dialog.ShowDialog() == true)
+                {
+                    _reportGeneratorPath = dialog.FileName;
+                    OpenCoverUISettings.Default.ReportGeneratorPath = _reportGeneratorPath;
                     OpenCoverUISettings.Default.Save();
                 }
             }
@@ -196,7 +219,7 @@ namespace OpenCover.UI.Processors
 					ExecuteCoverageResultPostProcessor(_openCoverResultsFile);
 				}
 
-				System.IO.File.Delete(_openCoverResultsFile);
+			    ExecuteReportGenerator();
 			}
 			catch (Exception ex)
 			{
@@ -207,7 +230,28 @@ namespace OpenCover.UI.Processors
 			return coverageSession;
 		}
 
-		/// <summary>
+	    private void ExecuteReportGenerator()
+	    {
+	        new TaskFactory().StartNew(
+	            () =>
+	            {
+	                var dir = Path.Combine(Path.GetTempPath(), "coverage");
+	                Process process = new Process();
+	                process.StartInfo.FileName = _reportGeneratorPath;
+	                process.StartInfo.Arguments = string.Format(@"-reports:""{0}"" -targetdir:""{1}""", _openCoverResultsFile, dir);
+	                process.StartInfo.UseShellExecute = false;
+	                process.StartInfo.RedirectStandardOutput = true;
+	                process.StartInfo.RedirectStandardError = true;
+	                process.OutputDataReceived += (sender, args) => IDEHelper.WriteToOutputWindow("received output: {0}", args.Data);
+	                process.ErrorDataReceived += (sender, args) => IDEHelper.WriteToOutputWindow("received output: {0}", args.Data);
+	                process.Start();
+	                process.BeginOutputReadLine();
+	                process.WaitForExit();
+                    System.Diagnostics.Process.Start(Path.Combine(dir, "index.htm"));
+	            });
+	    }
+
+	    /// <summary>
 		/// Executes the test result post processor.
 		/// </summary>
 		/// <param name="testResultsFile">The test results file.</param>
